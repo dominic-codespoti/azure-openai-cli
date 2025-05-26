@@ -9,7 +9,6 @@ pub enum ProviderConfig {
         api_key: String,
         engine: String,
     },
-    // Future: Add other providers here
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]

@@ -1,8 +1,11 @@
 use async_trait::async_trait;
 
 #[async_trait]
-pub trait LLMProvider {
+pub trait LLMProvider: Send + Sync {
     async fn chat(&self, prompt: &str) -> Result<String, String>;
+    async fn chat_with_params(&self, prompt: &str, _max_tokens: Option<u32>, _temperature: Option<f32>) -> Result<String, String> {
+        self.chat(prompt).await
+    }
 }
 
 pub struct AzureOpenAIProvider {
@@ -14,18 +17,24 @@ pub struct AzureOpenAIProvider {
 #[async_trait]
 impl LLMProvider for AzureOpenAIProvider {
     async fn chat(&self, prompt: &str) -> Result<String, String> {
+        self.chat_with_params(prompt, None, None).await
+    }
+
+    async fn chat_with_params(&self, prompt: &str, max_tokens: Option<u32>, temperature: Option<f32>) -> Result<String, String> {
         let client = reqwest::Client::new();
         let url = format!(
             "{}/openai/deployments/{}/chat/completions?api-version=2024-02-15-preview",
             self.endpoint.trim_end_matches('/'), self.deployment
         );
-        let payload = serde_json::json!({
+        let mut payload = serde_json::json!({
             "messages": [
                 { "role": "user", "content": prompt }
-            ],
-            "max_tokens": 50,
-            "temperature": 0.7,
+            ]
         });
+        if let Some(mt) = max_tokens { payload["max_tokens"] = serde_json::json!(mt); }
+        else { payload["max_tokens"] = serde_json::json!(50); }
+        if let Some(temp) = temperature { payload["temperature"] = serde_json::json!(temp); }
+        else { payload["temperature"] = serde_json::json!(0.7); }
         let resp = client
             .post(&url)
             .header("Content-Type", "application/json")

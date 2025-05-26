@@ -1,9 +1,47 @@
 mod provider;
 mod config;
 
-use std::env;
 use provider::*;
 use config::Config;
+use clap::{Parser, Subcommand};
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    /// Optional maximum number of tokens
+    #[arg(long)]
+    max_tokens: Option<u32>,
+
+    /// Optional temperature
+    #[arg(long)]
+    temperature: Option<f32>,
+
+    #[command(subcommand)]
+    command: Option<Commands>,
+
+    /// The prompt to send to the LLM (if not using subcommand)
+    input: Option<String>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Show or set config
+    Config {
+        #[command(subcommand)]
+        action: Option<ConfigAction>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ConfigAction {
+    /// Show current config
+    Show,
+    /// Set a config value
+    Set {
+        key: String,
+        value: String,
+    },
+}
 
 fn print_config_help() {
     println!("Usage: azure-openai-cli config [set <key> <value>] [show]");
@@ -18,55 +56,54 @@ fn get_config_value(env_key: &str, config_value: &Option<String>, default: &str)
 
 #[tokio::main]
 async fn main() {
-    let args: Vec<String> = env::args().collect();
-    if args.len() > 1 && args[1] == "config" {
-        let mut config = Config::load();
-        if args.len() == 2 || (args.len() == 3 && args[2] == "show") {
-            println!("Current config: {:#?}", config);
-            return;
-        } else if args.len() == 5 && args[2] == "set" {
-            match args[3].as_str() {
-                "provider" => config.provider = Some(args[4].clone()),
-                "azure_endpoint" => config.azure_endpoint = Some(args[4].clone()),
-                "azure_api_key" => config.azure_api_key = Some(args[4].clone()),
-                "azure_deployment" => config.azure_deployment = Some(args[4].clone()),
-                _ => {
-                    print_config_help();
-                    return;
+    let cli = Cli::parse();
+
+    match &cli.command {
+        Some(Commands::Config { action }) => {
+            let mut config = Config::load();
+            match action {
+                Some(ConfigAction::Show) | None => {
+                    println!("Current config: {:#?}", config);
+                }
+                Some(ConfigAction::Set { key, value }) => {
+                    match key.as_str() {
+                        "provider" => config.provider = Some(value.clone()),
+                        "azure_endpoint" => config.azure_endpoint = Some(value.clone()),
+                        "azure_api_key" => config.azure_api_key = Some(value.clone()),
+                        "azure_deployment" => config.azure_deployment = Some(value.clone()),
+                        _ => {
+                            print_config_help();
+                            return;
+                        }
+                    }
+                    config.save();
+                    println!("Config updated.");
                 }
             }
-            config.save();
-            println!("Config updated.");
             return;
-        } else {
-            print_config_help();
-            return;
+        }
+        None => {
+            let config = Config::load();
+            let provider = config.provider.as_deref().unwrap_or("azure");
+            let input_string = cli.input.as_deref().unwrap_or("");
+            if input_string.is_empty() {
+                eprintln!("No input string provided.");
+                return;
+            }
+            run_with_provider(
+                provider,
+                input_string,
+                &config,
+                cli.max_tokens,
+                cli.temperature,
+            )
+            .await;
         }
     }
-    // Load config as fallback
-    let config = Config::load();
-    if args.len() < 3 {
-        let provider = config.provider.as_deref().unwrap_or("");
-        if provider.is_empty() {
-            eprintln!("Usage: {} --provider <provider> <input_string>", args[0]);
-            return;
-        }
-        // Use config defaults if no args
-        let input_string = args.get(1).map(|s| s.as_str()).unwrap_or("");
-        if input_string.is_empty() {
-            eprintln!("No input string provided.");
-            return;
-        }
-        run_with_provider(provider, input_string, &config).await;
-        return;
-    }
-    let provider_name = &args[2];
-    let input_string = &args[3];
-    run_with_provider(provider_name, input_string, &config).await;
 }
 
-async fn run_with_provider(provider_name: &str, input_string: &str, config: &Config) {
-    let provider: Box<dyn LLMProvider> = match provider_name {
+async fn run_with_provider(provider_name: &str, input_string: &str, config: &Config, max_tokens: Option<u32>, temperature: Option<f32>) {
+    let provider: Box<dyn LLMProvider + Send + Sync> = match provider_name {
         "azure" => {
             let endpoint = get_config_value("AZURE_OPENAI_ENDPOINT", &config.azure_endpoint, "https://<your-endpoint>.openai.azure.com");
             let api_key = get_config_value("AZURE_OPENAI_API_KEY", &config.azure_api_key, "<your-api-key>");
@@ -78,7 +115,7 @@ async fn run_with_provider(provider_name: &str, input_string: &str, config: &Con
             return;
         }
     };
-    match provider.chat(input_string).await {
+    match provider.chat_with_params(input_string, max_tokens, temperature).await {
         Ok(response) => println!("{}", response),
         Err(e) => eprintln!("Error: {}", e),
     }
