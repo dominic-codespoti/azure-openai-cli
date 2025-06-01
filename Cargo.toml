@@ -9,7 +9,7 @@ repository = "https://github.com/dominic-codespoti/azure-openai-cli"
 homepage = "https://github.com/dominic-codespoti/azure-openai-cli"
 documentation = "https://docs.rs/azure-openai-cli"
 keywords = ["azure", "openai", "cli", "llm", "ai"]
-categories = ["command-line-utilities", "api-bindings", "ai"]
+categories = ["command-line-utilities", "api-bindings", "llm"]
 readme = "README.md"
 
 [dependencies]
